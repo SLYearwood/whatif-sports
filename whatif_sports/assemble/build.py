@@ -12,6 +12,8 @@ from pathlib import Path
 
 from whatif_sports import config, media
 from whatif_sports.assemble import captions as cap
+from whatif_sports.clips import store as clip_store
+from whatif_sports.clips.reader import ClipReader
 from whatif_sports.script.schema import Script, hex_to_rgb
 from whatif_sports.visuals import Ctx, render_frame
 from whatif_sports.visuals.common import progress
@@ -169,10 +171,20 @@ def render(script: Script, voice: Voice | None = None, log=print) -> Path:
     started = time.time()
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None
+    pending_clips: list[int] = []
+    used_clips: list[str] = []
     try:
         for p in plans:
             seg = script.segments[p.index]
             caps = cap.timed(seg.narration, p.audio_seconds, load_alignment(Path(p.audio)))
+            reader = None
+            if seg.type == "ai_clip":
+                path = clip_store.clip_path(script.id, seg)
+                if path.exists():
+                    reader = ClipReader(path)
+                    used_clips.append(path.name)
+                else:
+                    pending_clips.append(p.index + 1)
             for f in range(p.frames):
                 t = f / config.FPS
                 c = cap.at(caps, t)
@@ -183,8 +195,11 @@ def render(script: Script, voice: Voice | None = None, log=print) -> Path:
                     p.seconds,
                     caption=c.text if c else "",
                     caption_k=progress(t, c.start, 0.12) if c else 1.0,
+                    source=reader.next() if reader else None,
                 )
                 proc.stdin.write(img.tobytes())
+            if reader:
+                reader.close()
             log(f"[frames] {p.index + 1}/{len(plans)} {p.type} ({p.frames} frames)")
         proc.stdin.close()
     except BrokenPipeError:
@@ -202,7 +217,17 @@ def render(script: Script, voice: Voice | None = None, log=print) -> Path:
         "render_seconds": round(time.time() - started, 1),
         "segments": [asdict(p) for p in plans],
         "sources": script.sources,
+        # Publishing must set the platform's AI/synthetic-content disclosure when true,
+        # and must refuse while any clip is still pending.
+        "synthetic_media": bool(used_clips),
+        "ai_clips": used_clips,
+        "pending_clips": pending_clips,
     }
     (render_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if pending_clips:
+        log(
+            f"[clips]  segment(s) {pending_clips} show a placeholder. "
+            f"Run `whatif clips {script.id} --yes` to generate them."
+        )
     log(f"[done]  {out} ({manifest['seconds']}s, rendered in {manifest['render_seconds']}s)")
     return out

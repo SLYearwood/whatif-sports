@@ -11,21 +11,26 @@ from PIL import Image, ImageDraw
 
 from whatif_sports import config
 from whatif_sports.script.schema import (
+    MomentSegment,
     OutroSegment,
     PlayDiagramSegment,
+    PlaySceneSegment,
     ScoreboardSegment,
     StatSegment,
+    TeamKit,
     TimelineSegment,
     TitleSegment,
     hex_to_rgb,
 )
-from whatif_sports.visuals import plays
+from whatif_sports.visuals import figures as fg
+from whatif_sports.visuals import plays, scene
 from whatif_sports.visuals.common import (
     RGB,
     TextStyle,
     W,
     background,
     count_up,
+    ease_in_out,
     ease_out,
     ease_out_back,
     fit_text,
@@ -189,6 +194,154 @@ def render_play(seg: PlayDiagramSegment, ctx: Ctx, t: float, dur: float) -> Imag
     return img
 
 
+# --- play scene (stylized players) ---------------------------------------------------
+def to_kit(k: TeamKit) -> fg.Kit:
+    return fg.Kit(
+        jersey=hex_to_rgb(k.jersey),
+        pants=hex_to_rgb(k.pants),
+        helmet=hex_to_rgb(k.helmet) if k.helmet else None,
+        trim=hex_to_rgb(k.trim),
+    )
+
+
+def render_play_scene(seg: PlaySceneSegment, ctx: Ctx, t: float, dur: float) -> Image.Image:
+    img = Image.new("RGBA", (W, config.HEIGHT), (*config.BG_TOP, 255))
+    kits = scene.Kits(to_kit(seg.offense), to_kit(seg.defense))
+    scene.draw_scene(img, seg.play, t, dur, kits, ctx.accent)
+    if seg.label:
+        lab = seg.label.upper()
+        col = config.BRAND_RED if "HAPPEN" in lab else ctx.accent
+        k = progress(t, 0.0, 0.3)
+        paste(
+            img,
+            pill(lab, 60, config.BRAND_WHITE, col, 36, 18),
+            W / 2,
+            230,
+            alpha=k,
+            scale=0.85 + 0.15 * ease_out_back(k),
+        )
+    return img
+
+
+# --- moment (one big player) -----------------------------------------------------------
+def _confetti(img: Image.Image, t: float, colors: list[RGB]) -> None:
+    d = ImageDraw.Draw(img)
+    for i in range(90):
+        seed = i * 9301 + 49297
+        x0 = seed % 1080
+        speed = 260 + (seed % 7) * 60
+        y = (-100 + (seed % 1900) * 0.6 + t * speed) % 1500 - 100
+        x = x0 + 40 * math.sin(t * 2 + i)
+        c = colors[i % len(colors)]
+        a = t * 4 + i
+        w, h = 18, 9
+        pts = [
+            (x + math.cos(a) * w - math.sin(a) * h, y + math.sin(a) * w + math.cos(a) * h),
+            (x - math.cos(a) * w - math.sin(a) * h, y - math.sin(a) * w + math.cos(a) * h),
+            (x - math.cos(a) * w + math.sin(a) * h, y - math.sin(a) * w - math.cos(a) * h),
+            (x + math.cos(a) * w + math.sin(a) * h, y + math.sin(a) * w - math.cos(a) * h),
+        ]
+        d.polygon(pts, fill=c)
+
+
+def render_moment(seg: MomentSegment, ctx: Ctx, t: float, dur: float) -> Image.Image:
+    kit = to_kit(seg.kit)
+    img = background(t, kit.jersey if seg.pose != "dejected" else (70, 76, 96))
+    d = ImageDraw.Draw(img)
+    # spotlight cone + floor glow
+    cone = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cone)
+    cd.polygon(
+        [(W / 2 - 90, 0), (W / 2 + 90, 0), (W / 2 + 420, 1180), (W / 2 - 420, 1180)],
+        fill=(255, 255, 240, 26),
+    )
+    cd.ellipse((W / 2 - 400, 1120, W / 2 + 400, 1230), fill=(255, 255, 240, 40))
+    img.alpha_composite(cone)
+
+    if seg.pose == "celebrate":
+        _confetti(img, t, [kit.jersey, kit.trim, config.BRAND_YELLOW, config.BRAND_WHITE])
+        pose, facing, dx = fg.celebrate_pose(t), 1, 0.0
+    elif seg.pose == "dejected":
+        breathe = 0.5 + 0.5 * math.sin(t * 1.6)
+        pose = fg.DEJECTED.blend(fg.Pose(**{**fg.DEJECTED.__dict__, "head": -45}), breathe)
+        facing, dx = -1, 0.0
+        for i in range(40):  # cold rain streaks
+            x = (i * 137 + t * 90) % W
+            y = (i * 251 + t * 1400) % 1300 - 100
+            d.line((x, y, x - 14, y + 60), fill=(150, 165, 200), width=3)
+    elif seg.pose == "dive":
+        k = ease_in_out(progress(t, 0.2, max(0.8, dur * 0.5)))
+        pose, facing, dx = fg.run_pose(t * 12).blend(fg.DIVE, k), 1, -380 + 520 * k
+    else:  # run: in place, with speed lines
+        pose, facing, dx = fg.run_pose(t * 13), 1, 0.0
+        for i in range(14):
+            y = 300 + i * 60
+            x = W - ((t * 2200 + i * 330) % (W + 400))
+            d.line((x, y, x + 240, y), fill=(255, 255, 255, 60), width=6)
+
+    fig = fg.draw_figure(pose, 600, kit, facing, ball=seg.pose in ("dive", "run"))
+    k = progress(t, 0.0, 0.35)
+    paste(
+        img, fig.image, W / 2 + dx - fig.anchor[0], 1215 - fig.anchor[1], alpha=k, anchor="topleft"
+    )
+
+    top = 220
+    if seg.year is not None:
+        kp = progress(t, 0.1, 0.3)
+        paste(
+            img,
+            pill(str(seg.year), 64, (12, 14, 22), config.BRAND_YELLOW, 36, 16),
+            W / 2,
+            top,
+            alpha=kp,
+            scale=0.85 + 0.15 * ease_out_back(kp),
+        )
+        top += 110
+    if seg.text:
+        f, lines = fit_text(seg.text.upper(), CONTENT_W, 2, 92, 56)
+        tl = text_layer(lines, f)
+        kt = progress(t, 0.2, 0.4)
+        paste(
+            img, tl, W / 2, top + tl.height / 2 - 20, alpha=kt, scale=0.9 + 0.1 * ease_out_back(kt)
+        )
+    return img
+
+
+# --- AI clip ----------------------------------------------------------------------------
+def render_ai_clip(seg, ctx: Ctx, t: float, dur: float, source: Image.Image | None) -> Image.Image:
+    """The generated clip full-bleed, or a clearly marked placeholder until it exists."""
+    if source is not None:
+        img = source.convert("RGBA")
+        # darken the top a touch so an overlay headline stays readable
+        shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(shade).rectangle((0, 0, W, 520), fill=(0, 0, 0, 70))
+        img.alpha_composite(shade)
+    else:
+        img = background(t, ctx.accent)
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((90, 330, W - 90, 1150), radius=36, outline=config.MUTED, width=6)
+        paste(
+            img, pill("AI CLIP PENDING", 56, (12, 14, 22), config.BRAND_YELLOW, 36, 18), W / 2, 480
+        )
+        f, lines = fit_text(seg.prompt, W - 260, 7, 40, 30)
+        paste(img, text_layer(lines, f, TextStyle(fill=config.MUTED, shadow=False)), W / 2, 780)
+        paste(
+            img,
+            text_layer(
+                ["run: whatif clips <id> --yes"],
+                font(34),
+                TextStyle(fill=config.MUTED, shadow=False),
+            ),
+            W / 2,
+            1080,
+        )
+    if seg.text:
+        f, lines = fit_text(seg.text.upper(), CONTENT_W, 2, 92, 56)
+        k = progress(t, 0.15, 0.4)
+        paste(img, text_layer(lines, f), W / 2, 300, alpha=k, scale=0.9 + 0.1 * ease_out_back(k))
+    return img
+
+
 # --- timeline ------------------------------------------------------------------------
 def render_timeline(seg: TimelineSegment, ctx: Ctx, t: float, dur: float) -> Image.Image:
     img = background(t, ctx.accent)
@@ -257,6 +410,8 @@ TEMPLATES: dict[str, Template] = {
     "stat": render_stat,
     "scoreboard": render_scoreboard,
     "play_diagram": render_play,
+    "play_scene": render_play_scene,
+    "moment": render_moment,
     "timeline": render_timeline,
     "outro": render_outro,
 }
@@ -276,9 +431,19 @@ def draw_caption(img: Image.Image, text: str, k: float) -> None:
 
 
 def render_frame(
-    seg, ctx: Ctx, t: float, dur: float, caption: str = "", caption_k: float = 1.0
+    seg,
+    ctx: Ctx,
+    t: float,
+    dur: float,
+    caption: str = "",
+    caption_k: float = 1.0,
+    source: Image.Image | None = None,
 ) -> Image.Image:
-    img = TEMPLATES[seg.type](seg, ctx, t, dur)
+    """source: the current frame of an AI clip (ai_clip segments only)."""
+    if seg.type == "ai_clip":
+        img = render_ai_clip(seg, ctx, t, dur, source)
+    else:
+        img = TEMPLATES[seg.type](seg, ctx, t, dur)
     img = slow_zoom(img, t, dur)
     draw_caption(img, caption, caption_k)
     return img.convert("RGB")

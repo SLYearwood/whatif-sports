@@ -13,7 +13,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     from whatif_sports.visuals.plays import PLAYS
 
     s = load_script(args.script)
-    bad = [seg.play for seg in s.segments if seg.type == "play_diagram" and seg.play not in PLAYS]
+    bad = [
+        seg.play
+        for seg in s.segments
+        if seg.type in ("play_diagram", "play_scene") and seg.play not in PLAYS
+    ]
     if bad:
         print(f"Unknown play(s): {', '.join(bad)}. Known: {', '.join(sorted(PLAYS))}")
         return 1
@@ -43,6 +47,28 @@ def _cmd_voices(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_clips(args: argparse.Namespace) -> int:
+    from whatif_sports.clips import store
+    from whatif_sports.script import load_script
+
+    s = load_script(args.script)
+    todo = store.missing(s)
+    have = len(store.clip_segments(s)) - len(todo)
+    if not todo:
+        print(f"All {have} AI clip(s) for {s.id} are already generated.")
+        return 0
+    seconds = sum(seg.duration for _, seg in todo)
+    print(f"{len(todo)} clip(s) to generate ({seconds}s of video total), {have} already cached:")
+    for i, seg in todo:
+        print(f"  segment {i + 1}: {seg.duration}s {seg.resolution}  {seg.prompt[:70]}...")
+    if not args.yes:
+        print("\nThis is billed by Higgsfield. Re-run with --yes to generate.")
+        return 0
+    store.generate(s)
+    print(f"Done. Re-render with: whatif render {s.id}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     config.load_dotenv()
     parser = argparse.ArgumentParser(prog="whatif", description="Sports 'What If' Shorts pipeline")
@@ -60,12 +86,18 @@ def main(argv: list[str] | None = None) -> int:
     vs = sub.add_parser("voices", help="list the voices on your ElevenLabs account")
     vs.set_defaults(func=_cmd_voices)
 
+    c = sub.add_parser("clips", help="generate missing AI clips for a script (billed)")
+    c.add_argument("script", help="item id or path to a script YAML")
+    c.add_argument("--yes", action="store_true", help="actually submit (costs money)")
+    c.set_defaults(func=_cmd_clips)
+
+    from whatif_sports.clips import HiggsfieldError
     from whatif_sports.voice import ElevenLabsError
 
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (FileNotFoundError, ValueError, ElevenLabsError) as e:
+    except (FileNotFoundError, ValueError, ElevenLabsError, HiggsfieldError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

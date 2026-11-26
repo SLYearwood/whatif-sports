@@ -31,15 +31,28 @@ segments:
     label: "Marshawn Lynch, 24 carries in Super Bowl 49"
     narration: "Lynch already has a hundred and two yards on the night. Everyone in the building knows the ball is going to him."
 
-  - type: play_diagram
+  - type: play_scene
     play: slant_stack
     label: "What happened"
+    offense: {jersey: "#002244", pants: "#A5ACAF", helmet: "#002244", trim: "#69BE28"}
+    defense: {jersey: "#F2F2F2", pants: "#B0B7BC", helmet: "#002244", trim: "#C60C30"}
     narration: "Instead, Russell Wilson throws a quick slant. Undrafted rookie Malcolm Butler jumps the route. Interception."
 
-  - type: play_diagram
+  - type: play_scene
     play: inside_zone
     label: "What if"
+    offense: {jersey: "#002244", pants: "#A5ACAF", helmet: "#002244", trim: "#69BE28"}
+    defense: {jersey: "#F2F2F2", pants: "#B0B7BC", helmet: "#002244", trim: "#C60C30"}
     narration: "Hand it to Lynch. Even if he gets stuffed, Seattle has two more downs and that timeout."
+
+  - type: ai_clip
+    text: "Back-to-back"
+    duration: 5
+    prompt: >-
+      Night football stadium after a championship game, slow-motion low-angle shot of an
+      anonymous player in a navy uniform with bright green trim kneeling on the turf, then
+      rising with arms raised as green and white confetti falls under bright stadium lights.
+    narration: "Lynch punches it in. Seattle goes back to back."
 
   - type: timeline
     title: "The other timeline"
@@ -50,7 +63,7 @@ segments:
         text: "Brady stays at three rings"
       - year: 2017
         text: "Does the 28-3 comeback ever happen?"
-    narration: "Lynch punches it in. Seattle goes back to back. Brady stays at three rings, and the dynasty talk is over."
+    narration: "Brady stays at three rings, and all that dynasty talk is over before it starts."
 
   - type: outro
     text: "Worst call ever? Comment below."

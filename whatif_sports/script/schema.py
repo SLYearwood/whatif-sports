@@ -63,6 +63,61 @@ class PlayDiagramSegment(_Segment):
     label: str = ""
 
 
+class TeamKit(_Model):
+    """Uniform colors for stylized players. Colors only: no numbers, names, or logos."""
+
+    jersey: str
+    pants: str = "#E1E4EC"
+    helmet: str | None = None
+    trim: str = "#F5F7FA"
+
+    _hex = field_validator("jersey", "pants", "helmet", "trim")(_check_hex)
+
+
+class PlaySceneSegment(_Segment):
+    """Broadcast-angle animation of a named play with stylized players."""
+
+    type: Literal["play_scene"]
+    play: str = Field(description="Named play from visuals/plays.py")
+    label: str = ""
+    offense: TeamKit
+    defense: TeamKit
+
+
+class MomentSegment(_Segment):
+    """One big stylized player reacting (celebrating, dejected...) with a headline."""
+
+    type: Literal["moment"]
+    pose: Literal["celebrate", "dejected", "dive", "run"]
+    kit: TeamKit
+    text: str = ""
+    year: int | str | None = None
+
+
+class AIClipSegment(_Segment):
+    """A short AI-generated video shot (Higgsfield). Generated only via `whatif clips`.
+
+    Prompts must describe anonymous, fictional people; the generator also gets a suffix
+    forbidding recognizable faces, logos, numbers and text. Reviewers check the result.
+    """
+
+    type: Literal["ai_clip"]
+    prompt: str = Field(min_length=20)
+    model: str = "bytedance/seedance-2.0"
+    duration: int = Field(default=5, ge=4, le=15)
+    resolution: Literal["480p", "720p", "1080p"] = "720p"
+    text: str = ""
+
+    @field_validator("prompt")
+    @classmethod
+    def _no_marks(cls, v: str) -> str:
+        banned = ("logo", "trademark", "jersey number", "nfl shield", "real face")
+        hit = [b for b in banned if b in v.lower()]
+        if hit:
+            raise ValueError(f"prompt must not ask for {', '.join(hit)}")
+        return v
+
+
 class TimelineEvent(_Model):
     year: int | str
     text: str
@@ -84,6 +139,9 @@ Segment = Annotated[
     | StatSegment
     | ScoreboardSegment
     | PlayDiagramSegment
+    | PlaySceneSegment
+    | MomentSegment
+    | AIClipSegment
     | TimelineSegment
     | OutroSegment,
     Field(discriminator="type"),
