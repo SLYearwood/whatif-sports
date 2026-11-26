@@ -106,6 +106,12 @@ def _request(
                 continue
             if e.code == 401:
                 raise HiggsfieldError("Higgsfield rejected the API credentials (401).") from None
+            if "not_enough_credits" in detail:
+                raise HiggsfieldError(
+                    "Your Higgsfield API balance is empty, so nothing was generated or charged. "
+                    "Add credits in console.higgsfield.ai (API billing is separate from the "
+                    "Higgsfield app plan), then run the command again."
+                ) from None
             raise HiggsfieldError(f"Higgsfield HTTP {e.code}: {detail}") from None
         except urllib.error.URLError as e:
             if attempt < MAX_RETRIES:

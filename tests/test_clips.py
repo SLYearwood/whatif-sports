@@ -205,3 +205,17 @@ def test_clip_reader_scales_to_vertical_and_holds_last_frame(tmp_path):
     assert frames[-1].tobytes() == frames[-2].tobytes()
     img = render_frame(_seg(), Ctx(), 0.5, 3.0, source=frames[3])
     assert img.size == (config.WIDTH, config.HEIGHT)
+
+
+def test_out_of_credits_message(monkeypatch, creds):
+    import io
+    import urllib.error
+
+    def fake_urlopen(req, timeout=0):
+        raise urllib.error.HTTPError(
+            req.full_url, 403, "Forbidden", {}, io.BytesIO(b'{"detail": "not_enough_credits"}')
+        )
+
+    monkeypatch.setattr(higgsfield.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(higgsfield.HiggsfieldError, match="balance is empty"):
+        higgsfield._request("POST", "https://example.invalid/x", {})
