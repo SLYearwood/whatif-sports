@@ -433,7 +433,8 @@ def draw_scene(
 
     # far to near so nearer players overlap farther ones
     for _depth, a, pose, facing, sx, sy, s, kit, carrying in sorted(sprites, key=lambda r: -r[0]):
-        f = fg.draw_figure(pose, PLAYER_H * s, kit, facing, ball=carrying)
+        skin = fg.SKIN_TONES[int(a.player.x * 7 + a.player.y * 13 + 100) % len(fg.SKIN_TONES)]
+        f = fg.draw_figure(pose, PLAYER_H * s, kit, facing, ball=carrying, skin=skin)
         img.alpha_composite(f.image, (int(sx - f.anchor[0]), int(sy - f.anchor[1])))
         if a.player.label and a.player.key:
             tag = pill(a.player.label, 34, (12, 14, 22), config.BRAND_WHITE, 16, 8)

@@ -23,9 +23,7 @@ SS = 2  # supersampling factor for smooth edges
 # segment lengths as fractions of standing height
 THIGH, SHIN, TORSO = 0.245, 0.245, 0.30
 UPPER_ARM, FOREARM, NECK, HEAD_R = 0.16, 0.15, 0.03, 0.085
-MANNEQUIN = (46, 52, 72)  # neutral tone for arms/legs; not a skin color
 SHOE = (18, 20, 28)
-MASK = (190, 196, 210)
 
 
 @dataclass(frozen=True)
@@ -244,13 +242,70 @@ def _joints(p: Pose) -> dict[str, tuple[float, float]]:
     return {k: (x, y + off) for k, (x, y) in j.items()}
 
 
-def _capsule(d: ImageDraw.ImageDraw, a, b, width: float, fill, outline=None, ow: float = 0):
-    if outline:
-        _capsule(d, a, b, width + ow * 2, outline)
-    d.line([a, b], fill=fill, width=max(1, int(width)))
-    r = width / 2
-    for x, y in (a, b):
-        d.ellipse((x - r, y - r, x + r, y + r), fill=fill)
+# --- low-poly drawing -----------------------------------------------------------------
+# Faceted, flat-shaded blocks (the channel's low-poly look). Light comes from the
+# upper left, so faces turned toward it are lighter and the others darker.
+LIGHT = (-0.55, -0.83)
+SKIN_TONES = [(204, 150, 104), (168, 112, 74), (124, 82, 54), (226, 184, 146)]
+EDGE = (10, 12, 20, 160)
+
+
+def tint(c, k: float):
+    """Lighten (k > 0) or darken (k < 0) an RGB color."""
+    return mix(c, (255, 255, 255), k) if k > 0 else mix(c, (0, 0, 0), -k)
+
+
+def _facet(normal: tuple[float, float]) -> float:
+    """Shade amount for a face with this outward normal (-0.3 .. +0.22)."""
+    nx, ny = normal
+    n = math.hypot(nx, ny) or 1.0
+    dot = (nx * LIGHT[0] + ny * LIGHT[1]) / n
+    return 0.22 * dot if dot > 0 else 0.3 * dot
+
+
+def _block(d: ImageDraw.ImageDraw, a, b, w_a: float, w_b: float, color, edge: float) -> None:
+    """A faceted limb from a to b: two flat-shaded faces split along its length."""
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy) or 1e-6
+    nx, ny = -dy / length, dx / length
+    ha, hb = w_a / 2, w_b / 2
+    # extend slightly past both joints so neighbouring blocks overlap without gaps
+    ex, ey = dx / length * ha * 0.5, dy / length * ha * 0.5
+    a2, b2 = (ax - ex, ay - ey), (bx + ex, by + ey)
+    left = [(a2[0] + nx * ha, a2[1] + ny * ha), (b2[0] + nx * hb, b2[1] + ny * hb), b2, a2]
+    right = [a2, b2, (b2[0] - nx * hb, b2[1] - ny * hb), (a2[0] - nx * ha, a2[1] - ny * ha)]
+    d.polygon(left, fill=tint(color, _facet((nx, ny))))
+    d.polygon(right, fill=tint(color, _facet((-nx, -ny))))
+    d.polygon([left[0], left[1], right[2], right[3]], outline=EDGE, width=max(1, int(edge)))
+
+
+def _gem(
+    d: ImageDraw.ImageDraw,
+    c,
+    r: float,
+    color,
+    sides: int = 8,
+    squash: float = 1.0,
+    rot: float = 0.0,
+    edge: float = 1.0,
+) -> list[tuple[float, float]]:
+    """A faceted polygon: one flat-shaded triangle per side, like a low-poly sphere."""
+    cx, cy = c
+    pts = [
+        (
+            cx + math.cos(rot + i * 2 * math.pi / sides) * r,
+            cy + math.sin(rot + i * 2 * math.pi / sides) * r * squash,
+        )
+        for i in range(sides)
+    ]
+    for i in range(sides):
+        p1, p2 = pts[i], pts[(i + 1) % sides]
+        mxp, myp = (p1[0] + p2[0]) / 2 - cx, (p1[1] + p2[1]) / 2 - cy
+        d.polygon([c, p1, p2], fill=tint(color, _facet((mxp, myp)) * 1.3))
+    d.polygon(pts, outline=EDGE, width=max(1, int(edge)))
+    return pts
 
 
 @dataclass(frozen=True)
@@ -261,15 +316,21 @@ class Figure:
 
 
 def draw_figure(
-    pose: Pose, height_px: float, kit: Kit, facing: int = 1, ball: bool = False, shadow: bool = True
+    pose: Pose,
+    height_px: float,
+    kit: Kit,
+    facing: int = 1,
+    ball: bool = False,
+    shadow: bool = True,
+    skin: RGB | None = None,
 ) -> Figure:
-    """Render one player as a supersampled RGBA sprite."""
+    """Render one player as a supersampled, low-poly RGBA sprite."""
     h = height_px * SS
     j = _joints(pose)
-    # size the canvas to this pose (plus room for helmet, limbs' thickness and shadow)
+    # size the canvas to this pose (plus room for helmet, pads, limb thickness and shadow)
     xs = [p[0] * facing for p in j.values()] + [-0.4, 0.4]
     ys = [p[1] for p in j.values()] + [0.05]
-    pad = 0.16
+    pad = 0.2
     left, right = min(xs) - pad, max(xs) + pad
     top, bottom = min(ys) - pad, max(ys) + pad
     w_img, h_img = int((right - left) * h) + 2, int((bottom - top) * h) + 2
@@ -281,110 +342,117 @@ def draw_figure(
         x, y = j[name]
         return ox + x * h * facing, oy + y * h
 
-    outline = (8, 10, 16, 255)
-    ow = max(1.0, h * 0.012)
-    dark = 0.35
-    jersey, pants, helmet = kit.jersey, kit.pants, kit.helmet_color
+    edge = h * 0.008
+    far = -0.28  # far-side limbs sit in shadow
+    jersey, pants, helmet, trim = kit.jersey, kit.pants, kit.helmet_color, kit.trim
+    skin = skin or SKIN_TONES[0]
 
     if shadow:
         sw = h * (0.32 + 0.25 * min(1.0, pose.lift * 3))
         d.ellipse((ox - sw, oy - h * 0.035, ox + sw, oy + h * 0.035), fill=(0, 0, 0, 90))
 
-    def limb_set(side: str, shade: float) -> None:
-        c_pants = mix(pants, (0, 0, 0), shade)
-        c_sock = mix(jersey, (0, 0, 0), shade + 0.15)
-        _capsule(d, P("pelvis"), P(f"{side}_knee"), h * 0.105, c_pants, outline, ow)
-        _capsule(d, P(f"{side}_knee"), P(f"{side}_ankle"), h * 0.078, c_sock, outline, ow)
-        _capsule(d, P(f"{side}_ankle"), P(f"{side}_toe"), h * 0.055, SHOE, outline, ow)
+    def leg(side: str, shade: float) -> None:
+        _block(d, P("pelvis"), P(f"{side}_knee"), h * 0.145, h * 0.115, tint(pants, shade), edge)
+        _gem(d, P(f"{side}_knee"), h * 0.052, tint(pants, shade - 0.06), 6, edge=edge)
+        _block(
+            d,
+            P(f"{side}_knee"),
+            P(f"{side}_ankle"),
+            h * 0.095,
+            h * 0.075,
+            tint(jersey, shade - 0.08),
+            edge,
+        )
+        _block(
+            d, P(f"{side}_ankle"), P(f"{side}_toe"), h * 0.075, h * 0.06, tint(SHOE, shade), edge
+        )
 
-    def arm_set(side: str, shade: float) -> None:
-        c_sleeve = mix(jersey, (0, 0, 0), shade)
-        c_arm = mix(MANNEQUIN, (0, 0, 0), shade)
-        _capsule(d, P("shoulder"), P(f"{side}_elbow"), h * 0.08, c_sleeve, outline, ow)
-        _capsule(d, P(f"{side}_elbow"), P(f"{side}_hand"), h * 0.064, c_arm, outline, ow)
-        hx, hy = P(f"{side}_hand")
-        r = h * 0.036
-        d.ellipse((hx - r, hy - r, hx + r, hy + r), fill=c_arm, outline=outline, width=int(ow))
+    def arm(side: str, shade: float) -> None:
+        _block(d, P("shoulder"), P(f"{side}_elbow"), h * 0.1, h * 0.085, tint(jersey, shade), edge)
+        _block(
+            d, P(f"{side}_elbow"), P(f"{side}_hand"), h * 0.08, h * 0.07, tint(skin, shade), edge
+        )
+        _gem(d, P(f"{side}_hand"), h * 0.045, tint(skin, shade), 4, rot=math.pi / 4, edge=edge)
 
-    arm_set("far", dark)
-    limb_set("far", dark)
+    arm("far", far)
+    leg("far", far)
 
-    # torso: tapered jersey with shoulder pads
+    # torso: a boxy chest split into a lit front face and a shaded back face
     px, py = P("pelvis")
     sx, sy = P("shoulder")
-    ang = math.atan2(sy - py, sx - px) + math.pi / 2
-    nx, ny = math.cos(ang), math.sin(ang)
-    wb, wt = h * 0.09, h * 0.135
-    torso = [
-        (px + nx * wb, py + ny * wb),
-        (sx + nx * wt, sy + ny * wt),
-        (sx - nx * wt, sy - ny * wt),
-        (px - nx * wb, py - ny * wb),
-    ]
-    d.polygon(torso, fill=jersey, outline=outline, width=int(ow * 2))
-    pad = h * 0.1
-    d.ellipse(
-        (sx - pad, sy - pad, sx + pad, sy + pad), fill=jersey, outline=outline, width=int(ow * 2)
-    )
-    # sleeve stripe on the torso for a bit of uniform detail
-    mx, my = (px + sx) / 2, (py + sy) / 2
-    d.line(
-        [(mx + nx * wb * 1.1, my + ny * wb * 1.1), (mx - nx * wb * 1.1, my - ny * wb * 1.1)],
-        fill=kit.trim,
-        width=max(1, int(h * 0.018)),
-    )
-    _capsule(
+    ux, uy = sx - px, sy - py
+    ul = math.hypot(ux, uy) or 1.0
+    nx, ny = -uy / ul * facing, ux / ul * facing  # toward the chest's front
+    wb, wt = h * 0.125, h * 0.175
+    back = [(px - nx * wb, py - ny * wb), (sx - nx * wt, sy - ny * wt), (sx, sy), (px, py)]
+    front = [(px, py), (sx, sy), (sx + nx * wt, sy + ny * wt), (px + nx * wb, py + ny * wb)]
+    d.polygon(back, fill=tint(jersey, -0.22))
+    d.polygon(front, fill=tint(jersey, 0.06))
+    d.polygon([back[0], back[1], front[2], front[3]], outline=EDGE, width=max(1, int(edge)))
+    # waist band in the trim color
+    _block(
         d,
-        (px - nx * wb * 0.9, py - ny * wb * 0.9),
-        (px + nx * wb * 0.9, py + ny * wb * 0.9),
-        h * 0.05,
-        mix(pants, (0, 0, 0), 0.1),
+        (px - nx * wb, py - ny * wb),
+        (px + nx * wb, py + ny * wb),
+        h * 0.045,
+        h * 0.045,
+        tint(trim, -0.05),
+        edge,
     )
+    # shoulder pads: a wide, squashed gem sitting across the shoulders
+    _gem(d, (sx, sy), h * 0.185, jersey, 6, squash=0.7, rot=math.atan2(ny, nx), edge=edge)
 
-    limb_set("near", 0.0)
+    leg("near", 0.0)
 
-    # helmet: faceless dome, visor, facemask, center stripe
+    # helmet: faceted shell, face block, and a face mask in the trim color
     hx, hy = P("head")
-    r = HEAD_R * h * 1.18
-    d.ellipse((hx - r, hy - r, hx + r, hy + r), fill=helmet, outline=outline, width=int(ow * 2))
+    r = HEAD_R * h * 1.3
     tilt = math.radians(pose.lean * 0.6 + pose.head)
-    fx, fy = math.cos(tilt) * facing, math.sin(tilt)
-    vx, vy = hx + fx * r * 0.55, hy + fy * r * 0.55
-    d.ellipse((vx - r * 0.42, vy - r * 0.32, vx + r * 0.42, vy + r * 0.32), fill=(14, 16, 24))
-    for k in (-0.25, 0.15):
-        a0 = (hx + fx * r * 0.7 - fy * r * k * facing, hy + fy * r * 0.7 + fx * r * k * facing)
-        a1 = (a0[0] + fx * r * 0.45, a0[1] + fy * r * 0.45)
-        d.line([a0, a1], fill=MASK, width=max(1, int(h * 0.014)))
-    d.arc(
-        (hx - r * 0.98, hy - r * 0.98, hx + r * 0.98, hy + r * 0.98),
-        start=200 if facing > 0 else 250,
-        end=290 if facing > 0 else 340,
-        fill=kit.trim,
-        width=max(1, int(h * 0.02)),
-    )
+    fx, fy = math.cos(tilt) * facing, math.sin(tilt)  # forward, along the gaze
+    gx, gy = -fy * facing, fx * facing  # "down" relative to the head (gaze turned 90°)
+    _gem(d, (hx, hy), r, helmet, 8, rot=tilt, edge=edge)
+    c = (hx + fx * r * 0.5 + gx * r * 0.2, hy + fy * r * 0.5 + gy * r * 0.2)
+    face = [
+        (c[0] - fx * r * 0.25 - gx * r * 0.38, c[1] - fy * r * 0.25 - gy * r * 0.38),
+        (c[0] + fx * r * 0.32 - gx * r * 0.38, c[1] + fy * r * 0.32 - gy * r * 0.38),
+        (c[0] + fx * r * 0.32 + gx * r * 0.45, c[1] + fy * r * 0.32 + gy * r * 0.45),
+        (c[0] - fx * r * 0.25 + gx * r * 0.45, c[1] - fy * r * 0.25 + gy * r * 0.45),
+    ]
+    d.polygon(face, fill=tint(skin, -0.12))
+    bar = max(1, int(h * 0.016))
+    for k in (-0.08, 0.2):  # horizontal bars of the face mask
+        a0 = (c[0] - fx * r * 0.05 + gx * r * k, c[1] - fy * r * 0.05 + gy * r * k)
+        a1 = (c[0] + fx * r * 0.52 + gx * r * k, c[1] + fy * r * 0.52 + gy * r * k)
+        d.line([a0, a1], fill=trim, width=bar)
+    m0 = (c[0] + fx * r * 0.45 - gx * r * 0.35, c[1] + fy * r * 0.45 - gy * r * 0.35)
+    m1 = (c[0] + fx * r * 0.45 + gx * r * 0.45, c[1] + fy * r * 0.45 + gy * r * 0.45)
+    d.line([m0, m1], fill=trim, width=bar)
+    # stripe over the crown
+    s0 = (hx - fx * r * 0.65 - gx * r * 0.6, hy - fy * r * 0.65 - gy * r * 0.6)
+    s1 = (hx + fx * r * 0.3 - gx * r * 0.92, hy + fy * r * 0.3 - gy * r * 0.92)
+    d.line([s0, s1], fill=trim, width=max(1, int(h * 0.02)))
 
     hand = P("near_hand")
     if ball:
         _draw_ball(d, hand, h * 0.075, facing)
 
-    arm_set("near", 0.0)
+    arm("near", 0.0)
 
     out = img.resize((w_img // SS, h_img // SS), Image.LANCZOS)
     return Figure(out, (ox / SS, oy / SS), ((hand[0] - ox) / SS, (hand[1] - oy) / SS))
 
 
+BALL = (128, 70, 36)
+
+
 def _draw_ball(d: ImageDraw.ImageDraw, c, size: float, facing: int = 1) -> None:
+    """Low-poly football: a faceted, elongated gem with white laces."""
+    _gem(d, c, size * 1.3, BALL, 8, squash=0.6, edge=max(1.0, size * 0.06))
     x, y = c
-    d.ellipse(
-        (x - size * 1.25, y - size * 0.75, x + size * 1.25, y + size * 0.75),
-        fill=(122, 66, 34),
-        outline=(40, 20, 10),
-        width=max(1, int(size * 0.12)),
-    )
     d.line(
-        [(x - size * 0.5, y), (x + size * 0.5, y)],
+        [(x - size * 0.45, y - size * 0.12), (x + size * 0.45, y - size * 0.12)],
         fill=(245, 245, 245),
-        width=max(1, int(size * 0.14)),
+        width=max(1, int(size * 0.13)),
     )
 
 
