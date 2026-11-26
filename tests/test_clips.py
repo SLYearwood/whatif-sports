@@ -36,6 +36,14 @@ def test_prompt_rejects_logos():
         _seg(prompt="Player with the team logo on his helmet scores a touchdown")
 
 
+def test_spec_adds_house_style_sport_gear_and_safety():
+    p = store.ClipSpec.from_segment(_seg(), "nfl").payload()
+    assert p["prompt"].startswith("Low-poly 3D animation")
+    assert "not soccer" in p["prompt"] and "helmets" in p["prompt"]
+    custom = store.ClipSpec.from_segment(_seg(style="Claymation stop-motion."), "nfl").payload()
+    assert custom["prompt"].startswith("Claymation") and "Low-poly" not in custom["prompt"]
+
+
 def test_spec_adds_safety_suffix_and_vertical_format():
     spec = store.ClipSpec.from_segment(_seg())
     p = spec.payload()
@@ -50,6 +58,7 @@ def test_key_and_idempotency_are_stable_and_prompt_sensitive():
     assert a.key == b.key and a.idempotency_key == b.idempotency_key
     c = store.ClipSpec.from_segment(_seg(duration=6))
     assert c.key != a.key
+    assert store.ClipSpec.from_segment(_seg(), "nfl").key != a.key
 
 
 @pytest.fixture
@@ -155,7 +164,7 @@ def test_generate_submits_polls_downloads_and_caches(fake_api, tmp_path):
 def test_resume_uses_saved_job_instead_of_resubmitting(fake_api, tmp_path):
     script = load_script("seahawks-xlix-run")
     _, seg = store.clip_segments(script)[0]
-    spec = store.ClipSpec.from_segment(seg)
+    spec = store.ClipSpec.from_segment(seg, script.sport)
     d = tmp_path / script.id / "clips"
     d.mkdir(parents=True)
     (d / f"{spec.key}.job.json").write_text(

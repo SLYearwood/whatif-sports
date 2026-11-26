@@ -106,6 +106,7 @@ class AIClipSegment(_Segment):
     model: str = "bytedance/seedance-2.0"
     duration: int = Field(default=5, ge=4, le=15)
     resolution: Literal["480p", "720p", "1080p"] = "720p"
+    style: str = Field(default="", description="Overrides the house style (clips/store.py)")
     text: str = ""
 
     @field_validator("prompt")

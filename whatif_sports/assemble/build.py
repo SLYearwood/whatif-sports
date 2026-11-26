@@ -179,7 +179,7 @@ def render(script: Script, voice: Voice | None = None, log=print) -> Path:
             caps = cap.timed(seg.narration, p.audio_seconds, load_alignment(Path(p.audio)))
             reader = None
             if seg.type == "ai_clip":
-                path = clip_store.clip_path(script.id, seg)
+                path = clip_store.clip_path(script, seg)
                 if path.exists():
                     reader = ClipReader(path, fit_seconds=p.seconds)
                     used_clips.append(path.name)

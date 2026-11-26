@@ -49,9 +49,11 @@ segments:
     text: "Back-to-back"
     duration: 5
     prompt: >-
-      Night football stadium after a championship game, slow-motion low-angle shot of an
-      anonymous player in a navy uniform with bright green trim kneeling on the turf, then
-      rising with arms raised as green and white confetti falls under bright stadium lights.
+      Night football stadium right after a championship game. Slow-motion low-angle shot of
+      one football player in full gear (helmet on, shoulder pads, navy jersey and navy helmet
+      with bright green trim, gray pants) kneeling in the end zone holding the football, then
+      springing up with both arms raised as green and white confetti falls under bright
+      stadium lights and the crowd cheers in the stands.
     narration: "Lynch punches it in. Seattle goes back to back."
 
   - type: timeline

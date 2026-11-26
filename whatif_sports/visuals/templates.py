@@ -6,6 +6,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 
 from PIL import Image, ImageDraw
 
@@ -308,14 +309,25 @@ def render_moment(seg: MomentSegment, ctx: Ctx, t: float, dur: float) -> Image.I
 
 
 # --- AI clip ----------------------------------------------------------------------------
+@lru_cache(maxsize=1)
+def _top_fade(height: int = 620, strength: int = 120) -> Image.Image:
+    col = Image.new("L", (1, height))
+    for y in range(height):
+        col.putpixel((0, y), int(strength * (1 - y / height) ** 1.6))
+    alpha = col.resize((W, height))
+    fade = Image.new("RGBA", (W, config.HEIGHT), (0, 0, 0, 0))
+    black = Image.new("RGBA", (W, height), (0, 0, 0, 255))
+    black.putalpha(alpha)
+    fade.paste(black, (0, 0))
+    return fade
+
+
 def render_ai_clip(seg, ctx: Ctx, t: float, dur: float, source: Image.Image | None) -> Image.Image:
     """The generated clip full-bleed, or a clearly marked placeholder until it exists."""
     if source is not None:
         img = source.convert("RGBA")
-        # darken the top a touch so an overlay headline stays readable
-        shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(shade).rectangle((0, 0, W, 520), fill=(0, 0, 0, 70))
-        img.alpha_composite(shade)
+        # fade the top darker so an overlay headline stays readable (no hard edge)
+        img.alpha_composite(_top_fade())
     else:
         img = background(t, ctx.accent)
         d = ImageDraw.Draw(img)

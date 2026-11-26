@@ -17,11 +17,40 @@ from whatif_sports import config
 from whatif_sports.clips import higgsfield
 from whatif_sports.script.schema import AIClipSegment, Script
 
+# The channel's house look for every AI clip (a segment can override it with `style`).
+# Cartoon characters keep clips clearly fictional, never mistaken for real athletes.
+HOUSE_STYLE = (
+    "Low-poly 3D animation: chunky faceted characters built from simple geometric shapes, "
+    "flat solid colors, no realistic skin, hair, or fabric detail, like a polished low-poly "
+    "video game cinematic."
+)
+
+# Sport-specific gear so the generator doesn't drift into the wrong sport.
+SPORT_HINTS = {
+    "nfl": "This is American football (gridiron), not soccer: players wear football helmets "
+    "with face masks and shoulder pads, and the ball is an oval American football.",
+    "ncaaf": "This is American football (gridiron), not soccer: players wear football helmets "
+    "with face masks and shoulder pads, and the ball is an oval American football.",
+    "nba": "This is basketball: players wear basketball jerseys and shorts on a hardwood court.",
+    "mlb": "This is baseball: players wear baseball uniforms and caps or batting helmets.",
+    "nhl": "This is ice hockey: players wear hockey helmets, pads, and skates on ice.",
+}
+
 # Appended to every prompt: keeps generated people anonymous and brand-free.
 SAFETY_SUFFIX = (
-    " Stylized, cinematic. All people are anonymous, fictional athletes with no recognizable "
-    "faces; plain uniforms in solid colors with no logos, numbers, names, or text anywhere."
+    "All people are anonymous, fictional characters with no recognizable faces; plain "
+    "uniforms in solid colors with no logos, numbers, names, or text anywhere."
 )
+
+
+def full_prompt(seg: AIClipSegment, sport: str) -> str:
+    parts = [
+        seg.style or HOUSE_STYLE,
+        seg.prompt.strip(),
+        SPORT_HINTS.get(sport, ""),
+        SAFETY_SUFFIX,
+    ]
+    return " ".join(p for p in parts if p)
 
 
 @dataclass(frozen=True)
@@ -33,8 +62,8 @@ class ClipSpec:
     aspect_ratio: str = "9:16"
 
     @classmethod
-    def from_segment(cls, seg: AIClipSegment) -> ClipSpec:
-        return cls(seg.model, seg.prompt.strip() + SAFETY_SUFFIX, seg.duration, seg.resolution)
+    def from_segment(cls, seg: AIClipSegment, sport: str = "") -> ClipSpec:
+        return cls(seg.model, full_prompt(seg, sport), seg.duration, seg.resolution)
 
     def payload(self) -> dict:
         return {
@@ -60,8 +89,8 @@ def clips_dir(script_id: str) -> Path:
     return config.DATA_DIR / script_id / "clips"
 
 
-def clip_path(script_id: str, seg: AIClipSegment) -> Path:
-    return clips_dir(script_id) / f"{ClipSpec.from_segment(seg).key}.mp4"
+def clip_path(script: Script, seg: AIClipSegment) -> Path:
+    return clips_dir(script.id) / f"{ClipSpec.from_segment(seg, script.sport).key}.mp4"
 
 
 def clip_segments(script: Script) -> list[tuple[int, AIClipSegment]]:
@@ -69,7 +98,7 @@ def clip_segments(script: Script) -> list[tuple[int, AIClipSegment]]:
 
 
 def missing(script: Script) -> list[tuple[int, AIClipSegment]]:
-    return [(i, s) for i, s in clip_segments(script) if not clip_path(script.id, s).exists()]
+    return [(i, s) for i, s in clip_segments(script) if not clip_path(script, s).exists()]
 
 
 def generate(script: Script, log=print) -> list[Path]:
@@ -78,7 +107,7 @@ def generate(script: Script, log=print) -> list[Path]:
     d = clips_dir(script.id)
     d.mkdir(parents=True, exist_ok=True)
     for i, seg in missing(script):
-        spec = ClipSpec.from_segment(seg)
+        spec = ClipSpec.from_segment(seg, script.sport)
         dest = d / f"{spec.key}.mp4"
         job_file = d / f"{spec.key}.job.json"
         if job_file.exists():
