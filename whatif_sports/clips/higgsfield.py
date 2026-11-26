@@ -43,7 +43,14 @@ def _auth() -> str:
     """
     single = os.environ.get("HIGGSFIELD_API_KEY", "").strip()
     if single:
-        return single if single.startswith("Key ") else f"Key {single}"
+        bare = single.removeprefix("Key ").strip()
+        if ":" not in bare:
+            raise HiggsfieldError(
+                "HIGGSFIELD_API_KEY looks like only the key ID; the secret is missing. "
+                "Higgsfield needs both: set HIGGSFIELD_API_KEY=<key id>:<secret>, or put them "
+                "in HIGGSFIELD_KEY_ID and HIGGSFIELD_KEY_SECRET."
+            )
+        return f"Key {bare}"
     key_id = os.environ.get("HIGGSFIELD_KEY_ID", "").strip()
     secret = os.environ.get("HIGGSFIELD_KEY_SECRET", "").strip()
     if key_id and secret:

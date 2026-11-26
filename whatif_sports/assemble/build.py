@@ -181,7 +181,7 @@ def render(script: Script, voice: Voice | None = None, log=print) -> Path:
             if seg.type == "ai_clip":
                 path = clip_store.clip_path(script.id, seg)
                 if path.exists():
-                    reader = ClipReader(path)
+                    reader = ClipReader(path, fit_seconds=p.seconds)
                     used_clips.append(path.name)
                 else:
                     pending_clips.append(p.index + 1)

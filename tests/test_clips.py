@@ -71,10 +71,16 @@ def test_auth_header_format(creds):
 
 
 def test_single_api_key_is_used_as_is(monkeypatch):
-    monkeypatch.setenv("HIGGSFIELD_API_KEY", "single-key-not-real")
-    assert higgsfield._auth() == "Key single-key-not-real"
-    monkeypatch.setenv("HIGGSFIELD_API_KEY", "Key already-prefixed")
-    assert higgsfield._auth() == "Key already-prefixed"
+    monkeypatch.setenv("HIGGSFIELD_API_KEY", "id-not-real:secret-not-real")
+    assert higgsfield._auth() == "Key id-not-real:secret-not-real"
+    monkeypatch.setenv("HIGGSFIELD_API_KEY", "Key id-not-real:secret-not-real")
+    assert higgsfield._auth() == "Key id-not-real:secret-not-real"
+
+
+def test_key_id_without_secret_is_explained(monkeypatch):
+    monkeypatch.setenv("HIGGSFIELD_API_KEY", "00000000-0000-0000-0000-000000000000")
+    with pytest.raises(higgsfield.HiggsfieldError, match="secret is missing"):
+        higgsfield._auth()
 
 
 @pytest.mark.parametrize(
@@ -219,3 +225,41 @@ def test_out_of_credits_message(monkeypatch, creds):
     monkeypatch.setattr(higgsfield.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(higgsfield.HiggsfieldError, match="balance is empty"):
         higgsfield._request("POST", "https://example.invalid/x", {})
+
+
+def test_speed_factor_fits_payoff_but_caps_speedup():
+    from whatif_sports.clips.reader import MAX_SPEEDUP, speed_factor
+
+    assert speed_factor(5.0, 6.0) == 1.0
+    assert speed_factor(5.0, None) == 1.0
+    assert speed_factor(5.0, 3.5) == pytest.approx(5.0 / 3.5)
+    assert speed_factor(10.0, 3.0) == MAX_SPEEDUP
+
+
+@needs_ffmpeg
+def test_clip_reader_speedup_reaches_the_end(tmp_path):
+    clip = tmp_path / "c.mp4"
+    subprocess.run(
+        [
+            config.ffmpeg(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=30:duration=1",
+            "-pix_fmt",
+            "yuv420p",
+            str(clip),
+        ],
+        check=True,
+    )
+    r = ClipReader(clip, fit_seconds=0.7)
+    n = 0
+    while not r.ended:
+        r.next()
+        n += 1
+    r.close()
+    assert r.speed == pytest.approx(1 / 0.7, rel=0.01)
+    assert n <= 23, "a 1s clip sped up to ~0.7s should yield about 21 frames"
