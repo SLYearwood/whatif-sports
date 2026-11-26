@@ -319,12 +319,12 @@ def render_ai_clip(seg, ctx: Ctx, t: float, dur: float, source: Image.Image | No
     else:
         img = background(t, ctx.accent)
         d = ImageDraw.Draw(img)
-        d.rounded_rectangle((90, 330, W - 90, 1150), radius=36, outline=config.MUTED, width=6)
+        d.rounded_rectangle((90, 440, W - 90, 1190), radius=36, outline=config.MUTED, width=6)
         paste(
-            img, pill("AI CLIP PENDING", 56, (12, 14, 22), config.BRAND_YELLOW, 36, 18), W / 2, 480
+            img, pill("AI CLIP PENDING", 56, (12, 14, 22), config.BRAND_YELLOW, 36, 18), W / 2, 560
         )
         f, lines = fit_text(seg.prompt, W - 260, 7, 40, 30)
-        paste(img, text_layer(lines, f, TextStyle(fill=config.MUTED, shadow=False)), W / 2, 780)
+        paste(img, text_layer(lines, f, TextStyle(fill=config.MUTED, shadow=False)), W / 2, 840)
         paste(
             img,
             text_layer(
@@ -333,7 +333,7 @@ def render_ai_clip(seg, ctx: Ctx, t: float, dur: float, source: Image.Image | No
                 TextStyle(fill=config.MUTED, shadow=False),
             ),
             W / 2,
-            1080,
+            1120,
         )
     if seg.text:
         f, lines = fit_text(seg.text.upper(), CONTENT_W, 2, 92, 56)
