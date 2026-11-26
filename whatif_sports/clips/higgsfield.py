@@ -3,7 +3,8 @@
 Lifecycle: POST /<model>/text-to-video -> {request_id, status_url} -> poll status_url until
 completed (video.url) or failed/nsfw/canceled -> download the MP4 (URLs expire).
 
-Credentials come from HIGGSFIELD_KEY_ID / HIGGSFIELD_KEY_SECRET and are never logged.
+Credentials come from HIGGSFIELD_API_KEY (or HIGGSFIELD_KEY_ID + HIGGSFIELD_KEY_SECRET)
+and are never logged.
 """
 
 from __future__ import annotations
@@ -33,14 +34,49 @@ class Job:
 
 
 def _auth() -> str:
+    """Authorization header value.
+
+    The docs specify `Key <KEY_ID>:<KEY_SECRET>`. Accepted from .env as either:
+      HIGGSFIELD_API_KEY=<the single string the Console gives you>  (used as-is), or
+      HIGGSFIELD_KEY_ID + HIGGSFIELD_KEY_SECRET (joined with a colon).
+    Run `whatif clips --check-auth` to confirm Higgsfield accepts it (free).
+    """
+    single = os.environ.get("HIGGSFIELD_API_KEY", "").strip()
+    if single:
+        return single if single.startswith("Key ") else f"Key {single}"
     key_id = os.environ.get("HIGGSFIELD_KEY_ID", "").strip()
     secret = os.environ.get("HIGGSFIELD_KEY_SECRET", "").strip()
-    if not key_id or not secret:
-        raise HiggsfieldError(
-            "HIGGSFIELD_KEY_ID and HIGGSFIELD_KEY_SECRET must be set in .env "
-            "(create them at console.higgsfield.ai)."
-        )
-    return f"Key {key_id}:{secret}"
+    if key_id and secret:
+        return f"Key {key_id}:{secret}"
+    raise HiggsfieldError(
+        "No Higgsfield key found. Put the key from console.higgsfield.ai in .env as "
+        "HIGGSFIELD_API_KEY=... (or HIGGSFIELD_KEY_ID + HIGGSFIELD_KEY_SECRET if it gives two)."
+    )
+
+
+def check_auth() -> str:
+    """Free credential check: ask for the status of a request id that can't exist.
+
+    401 means the key was rejected; 404 means the key was accepted. Nothing is created
+    or billed either way.
+    """
+    url = f"{API_ROOT}/requests/00000000-0000-0000-0000-000000000000/status"
+    try:
+        _request("GET", url, timeout=30)
+    except HiggsfieldError as e:
+        msg = str(e)
+        if "401" in msg:
+            raise HiggsfieldError(
+                "Higgsfield rejected this key (401). If the Console shows a key ID and a "
+                "secret, set HIGGSFIELD_KEY_ID and HIGGSFIELD_KEY_SECRET instead; if it shows "
+                "one string, paste the whole string into HIGGSFIELD_API_KEY."
+            ) from None
+        if "403" in msg:
+            raise HiggsfieldError(f"Key accepted but not usable: {msg}") from None
+        if "404" in msg or "not found" in msg.lower():
+            return "Key accepted by Higgsfield."
+        raise
+    return "Key accepted by Higgsfield."
 
 
 def _request(

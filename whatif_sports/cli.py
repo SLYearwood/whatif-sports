@@ -48,9 +48,15 @@ def _cmd_voices(args: argparse.Namespace) -> int:
 
 
 def _cmd_clips(args: argparse.Namespace) -> int:
-    from whatif_sports.clips import store
+    from whatif_sports.clips import higgsfield, store
     from whatif_sports.script import load_script
 
+    if args.check_auth:
+        print(higgsfield.check_auth())
+        return 0
+    if not args.script:
+        print("error: give a script id, or use --check-auth", file=sys.stderr)
+        return 1
     s = load_script(args.script)
     todo = store.missing(s)
     have = len(store.clip_segments(s)) - len(todo)
@@ -87,8 +93,11 @@ def main(argv: list[str] | None = None) -> int:
     vs.set_defaults(func=_cmd_voices)
 
     c = sub.add_parser("clips", help="generate missing AI clips for a script (billed)")
-    c.add_argument("script", help="item id or path to a script YAML")
+    c.add_argument("script", nargs="?", help="item id or path to a script YAML")
     c.add_argument("--yes", action="store_true", help="actually submit (costs money)")
+    c.add_argument(
+        "--check-auth", action="store_true", help="check the Higgsfield key works (free)"
+    )
     c.set_defaults(func=_cmd_clips)
 
     from whatif_sports.clips import HiggsfieldError

@@ -54,18 +54,46 @@ def test_key_and_idempotency_are_stable_and_prompt_sensitive():
 
 @pytest.fixture
 def creds(monkeypatch):
+    monkeypatch.delenv("HIGGSFIELD_API_KEY", raising=False)
     monkeypatch.setenv("HIGGSFIELD_KEY_ID", "id-not-real")
     monkeypatch.setenv("HIGGSFIELD_KEY_SECRET", "secret-not-real")
 
 
 def test_missing_credentials(monkeypatch):
-    monkeypatch.delenv("HIGGSFIELD_KEY_ID", raising=False)
-    with pytest.raises(higgsfield.HiggsfieldError, match="HIGGSFIELD_KEY_ID"):
+    for k in ("HIGGSFIELD_API_KEY", "HIGGSFIELD_KEY_ID", "HIGGSFIELD_KEY_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    with pytest.raises(higgsfield.HiggsfieldError, match="HIGGSFIELD_API_KEY"):
         higgsfield._auth()
 
 
 def test_auth_header_format(creds):
     assert higgsfield._auth() == "Key id-not-real:secret-not-real"
+
+
+def test_single_api_key_is_used_as_is(monkeypatch):
+    monkeypatch.setenv("HIGGSFIELD_API_KEY", "single-key-not-real")
+    assert higgsfield._auth() == "Key single-key-not-real"
+    monkeypatch.setenv("HIGGSFIELD_API_KEY", "Key already-prefixed")
+    assert higgsfield._auth() == "Key already-prefixed"
+
+
+@pytest.mark.parametrize(
+    ("error", "ok"),
+    [
+        ("Higgsfield HTTP 404: Not found", True),
+        ("Higgsfield rejected the API credentials (401).", False),
+    ],
+)
+def test_check_auth_reads_404_as_accepted(monkeypatch, error, ok):
+    def fake_request(*a, **k):
+        raise higgsfield.HiggsfieldError(error)
+
+    monkeypatch.setattr(higgsfield, "_request", fake_request)
+    if ok:
+        assert "accepted" in higgsfield.check_auth()
+    else:
+        with pytest.raises(higgsfield.HiggsfieldError, match="rejected"):
+            higgsfield.check_auth()
 
 
 @pytest.fixture

@@ -26,6 +26,7 @@ copy .env.example .env
 .\.venv\Scripts\whatif render seahawks-xlix-run --voice flite      # force the offline voice
 .\.venv\Scripts\whatif render seahawks-xlix-run --voice sapi       # Windows voice, offline
 .\.venv\Scripts\whatif voices                                      # list ElevenLabs voice ids
+.\.venv\Scripts\whatif clips --check-auth                            # confirm the Higgsfield key works (free)
 .\.venv\Scripts\whatif clips seahawks-xlix-run                     # preview AI clips to generate
 .\.venv\Scripts\whatif clips seahawks-xlix-run --yes               # generate them (billed)
 ```
