@@ -1,0 +1,57 @@
+id: seahawks-xlix-run
+title: "What if the Seahawks just ran it?"
+sport: nfl
+hook: "One yard. Marshawn Lynch. And they threw it."
+accent: "#69BE28"
+sources:
+  - "Super Bowl XLIX box score, Feb 1, 2015 (Pro-Football-Reference): NE 28, SEA 24; Lynch 24 rush, 102 yds, 1 TD"
+  - "NFL Gamebook, Super Bowl XLIX: 2nd-and-goal at NE 1 with 0:26 left in Q4; Seattle 1 timeout remaining; Wilson pass intercepted by M. Butler"
+  - "Malcolm Butler: undrafted rookie (West Alabama), signed by New England in 2014"
+  - "Super Bowl XLVIII, Feb 2, 2014: Seattle 43, Denver 8"
+segments:
+  - type: title
+    text: "What if the Seahawks just ran it?"
+    narration: "Super Bowl 49. One yard to go. Seattle has Marshawn Lynch... and they throw it."
+
+  - type: scoreboard
+    teams:
+      - name: "Seattle"
+        score: 24
+        color: "#69BE28"
+      - name: "New England"
+        score: 28
+        color: "#C60C30"
+    clock: "0:26"
+    period: "4TH"
+    situation: "2nd & Goal at the 1"
+    narration: "Down four, twenty six seconds left, second and goal from the one. Seattle still has a timeout."
+
+  - type: stat
+    big: "102 yds"
+    label: "Marshawn Lynch, 24 carries in Super Bowl 49"
+    narration: "Lynch already has a hundred and two yards on the night. Everyone in the building knows the ball is going to him."
+
+  - type: play_diagram
+    play: slant_stack
+    label: "What happened"
+    narration: "Instead, Russell Wilson throws a quick slant. Undrafted rookie Malcolm Butler jumps the route. Interception."
+
+  - type: play_diagram
+    play: inside_zone
+    label: "What if"
+    narration: "Hand it to Lynch. Even if he gets stuffed, Seattle has two more downs and that timeout."
+
+  - type: timeline
+    title: "The other timeline"
+    events:
+      - year: 2015
+        text: "Seattle wins back-to-back titles"
+      - year: 2015
+        text: "Brady stays at three rings"
+      - year: 2017
+        text: "Does the 28-3 comeback ever happen?"
+    narration: "Lynch punches it in. Seattle goes back to back. Brady stays at three rings, and the dynasty talk is over."
+
+  - type: outro
+    text: "Worst call ever? Comment below."
+    narration: "Worst call in Super Bowl history, or just bad luck? Tell me in the comments."

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatif-sports"
+version = "0.1.0"
+description = "Automated pipeline for a faceless sports 'What If' Shorts channel."
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=10.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+whatif = "whatif_sports.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["whatif_sports*"]
+
+[tool.setuptools.package-data]
+whatif_sports = ["voice/*.ps1"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["ffmpeg: needs a local ffmpeg build (skipped when missing)"]
