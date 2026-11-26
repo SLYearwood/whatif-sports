@@ -51,7 +51,12 @@ def display_text(text: str) -> str:
     return re.sub(r"(\.\.\.|[,;:.—])+$", "", text.strip())
 
 
-def timed(narration: str, audio_seconds: float) -> list[Caption]:
+def timed(narration: str, audio_seconds: float, alignment: dict | None = None) -> list[Caption]:
+    """Caption chunks with start/end times. Uses TTS character timings when available."""
+    if alignment:
+        aligned = _from_alignment(narration, audio_seconds, alignment)
+        if aligned:
+            return aligned
     parts = chunk(narration)
     total = sum(_weight(p) for p in parts) or 1.0
     out, t = [], 0.0
@@ -59,6 +64,36 @@ def timed(narration: str, audio_seconds: float) -> list[Caption]:
         d = audio_seconds * _weight(p) / total
         out.append(Caption(display_text(p), t, t + d))
         t += d
+    return out
+
+
+def _from_alignment(narration: str, audio_seconds: float, alignment: dict) -> list[Caption] | None:
+    """Time chunks from per-character timings (ElevenLabs `alignment`).
+
+    Each chunk appears when its first character is spoken and stays up until the next
+    chunk starts, so there is never a blank gap mid-sentence. Returns None if the
+    alignment doesn't match the narration text, so the caller can fall back.
+    """
+    chars = alignment.get("characters") or []
+    starts = alignment.get("character_start_times_seconds") or []
+    ends = alignment.get("character_end_times_seconds") or []
+    if "".join(chars) != narration or not (len(chars) == len(starts) == len(ends)):
+        return None
+    parts = chunk(narration)
+    begin, cursor = [], 0
+    for p in parts:
+        idx = narration.find(p.split()[0], cursor)
+        if idx < 0:
+            return None
+        begin.append(starts[idx])
+        cursor = idx + len(p.split()[0])
+    begin[0] = 0.0
+    out = []
+    for i, p in enumerate(parts):
+        end = begin[i + 1] if i + 1 < len(parts) else max(ends[-1], audio_seconds)
+        if end <= begin[i]:
+            return None
+        out.append(Caption(display_text(p), begin[i], end))
     return out
 
 

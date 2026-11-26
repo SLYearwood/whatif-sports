@@ -1,34 +1,49 @@
-"""Text-to-speech per segment, cached by a hash of (backend, voice, text).
+"""Text-to-speech per segment, cached by a hash of everything that affects the audio.
 
-Backends (choose with WHATIF_TTS):
-  flite  ffmpeg's built-in libflite voice. Works anywhere ffmpeg has --enable-libflite.
-  sapi   Windows built-in voices via System.Speech. Offline, sounds more natural.
-ElevenLabs arrives in Milestone 2 behind the same `synthesize()` interface.
+Backends (WHATIF_TTS; when unset, `elevenlabs` if its key + voice id are configured, else `flite`):
+  elevenlabs  ElevenLabs API (Shawn's cloned voice). Returns character timings for captions.
+  flite       ffmpeg's built-in libflite voice. Offline dev fallback.
+  sapi        Windows built-in voices via System.Speech. Offline, more natural than flite.
+
+Cached files live in the given cache dir as <key>.wav (+ <key>.align.json for ElevenLabs).
+Re-rendering never re-bills: a cached key is reused as-is.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from whatif_sports import media
+from whatif_sports.voice import elevenlabs
 
 FLITE_VOICES = {"kal", "kal16", "awb", "rms", "slt"}
+BACKENDS = ("elevenlabs", "flite", "sapi")
 
 
 @dataclass(frozen=True)
 class Voice:
     backend: str = "flite"
-    name: str = "rms"
+    name: str = "rms"  # flite voice, SAPI voice name, or ElevenLabs voice id
     rate: int = 1  # sapi only: -10..10
+    model: str = ""  # elevenlabs only
+    settings: elevenlabs.Settings | None = None  # elevenlabs only
 
     @classmethod
-    def from_env(cls) -> Voice:
-        backend = os.environ.get("WHATIF_TTS", "flite").lower()
+    def from_env(cls, backend: str | None = None) -> Voice:
+        backend = (backend or os.environ.get("WHATIF_TTS") or _default_backend()).lower()
+        if backend == "elevenlabs":
+            return cls(
+                "elevenlabs",
+                os.environ.get("ELEVENLABS_VOICE_ID", "").strip(),
+                model=os.environ.get("ELEVENLABS_MODEL", elevenlabs.DEFAULT_MODEL),
+                settings=elevenlabs.Settings.from_env(),
+            )
         if backend == "flite":
             name = os.environ.get("WHATIF_FLITE_VOICE", "rms")
             if name not in FLITE_VOICES:
@@ -42,20 +57,69 @@ class Voice:
                 os.environ.get("WHATIF_SAPI_VOICE", ""),
                 int(os.environ.get("WHATIF_SAPI_RATE", "1")),
             )
-        raise ValueError(f"Unknown WHATIF_TTS backend {backend!r} (use flite or sapi)")
+        raise ValueError(f"Unknown TTS backend {backend!r} (use one of {', '.join(BACKENDS)})")
 
-    def cache_key(self, text: str) -> str:
-        raw = f"{self.backend}|{self.name}|{self.rate}|{text}".encode()
-        return hashlib.sha256(raw).hexdigest()[:16]
+    @property
+    def label(self) -> str:
+        if self.backend == "elevenlabs":
+            return f"elevenlabs:{self.model}"
+        return f"{self.backend}:{self.name or 'default'}"
+
+    def cache_key(self, text: str, previous_text: str = "", next_text: str = "") -> str:
+        parts = [self.backend, self.name, str(self.rate), text]
+        if self.backend == "elevenlabs":
+            settings = asdict(self.settings) if self.settings else {}
+            parts += [self.model, json.dumps(settings, sort_keys=True), previous_text, next_text]
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-def synthesize(text: str, voice: Voice, cache_dir: Path) -> Path:
-    """Return a 44.1 kHz mono WAV of `text`, reusing the cached file if it exists."""
+def _default_backend() -> str:
+    if os.environ.get("ELEVENLABS_API_KEY") and os.environ.get("ELEVENLABS_VOICE_ID"):
+        return "elevenlabs"
+    return "flite"
+
+
+def cache_path(
+    text: str, voice: Voice, cache_dir: Path, previous_text: str = "", next_text: str = ""
+) -> Path:
+    return cache_dir / f"{voice.cache_key(text, previous_text, next_text)}.wav"
+
+
+def is_cached(path: Path) -> bool:
+    return path.exists() and path.stat().st_size > 0
+
+
+def synthesize(
+    text: str,
+    voice: Voice,
+    cache_dir: Path,
+    previous_text: str = "",
+    next_text: str = "",
+) -> Path:
+    """Return a 44.1 kHz mono WAV of `text`, reusing the cached file if it exists.
+
+    previous_text/next_text are only used by ElevenLabs (for natural flow between segments).
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = voice.cache_key(text)
-    out = cache_dir / f"{key}.wav"
-    if out.exists() and out.stat().st_size > 0:
+    out = cache_path(text, voice, cache_dir, previous_text, next_text)
+    if is_cached(out):
         return out
+    key = out.stem
+    if voice.backend == "elevenlabs":
+        result = elevenlabs.tts(
+            text, voice.name, voice.model, voice.settings, previous_text, next_text
+        )
+        src = cache_dir / f"{key}.src.mp3"
+        src.write_bytes(result.audio)
+        if result.alignment:
+            out.with_suffix(".align.json").write_text(
+                json.dumps(result.alignment), encoding="utf-8"
+            )
+        # No silence trimming here: it would shift the character timings.
+        _to_wav(src, out, trim_start=False)
+        src.unlink(missing_ok=True)
+        return out
+
     txt = cache_dir / f"{key}.txt"
     txt.write_text(text, encoding="utf-8")
     raw = cache_dir / f"{key}.raw.wav"
@@ -67,24 +131,29 @@ def synthesize(text: str, voice: Voice, cache_dir: Path) -> Path:
         )
     elif voice.backend == "sapi":
         _sapi(txt, raw, voice)
-    else:  # pragma: no cover - guarded by Voice.from_env
+    else:
         raise ValueError(voice.backend)
-    # Normalize format; trim leading silence so the hook starts immediately.
-    media.run_ffmpeg(
-        [
-            "-i",
-            str(raw),
-            "-af",
-            "silenceremove=start_periods=1:start_threshold=-50dB,aresample=44100",
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            str(out),
-        ]
-    )
+    # Trim leading silence so the hook starts immediately.
+    _to_wav(raw, out, trim_start=True)
     raw.unlink(missing_ok=True)
     return out
+
+
+def load_alignment(wav: Path) -> dict | None:
+    """Character timings saved next to an ElevenLabs clip, if any."""
+    p = Path(wav).with_suffix(".align.json")
+    if not p.exists():
+        return None
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _to_wav(src: Path, out: Path, trim_start: bool) -> None:
+    filters = "aresample=44100"
+    if trim_start:
+        filters = "silenceremove=start_periods=1:start_threshold=-50dB," + filters
+    tmp = out.with_suffix(".tmp.wav")
+    media.run_ffmpeg(["-i", str(src), "-af", filters, "-ac", "1", "-c:a", "pcm_s16le", str(tmp)])
+    tmp.replace(out)  # atomic: a half-written file never looks cached
 
 
 def _sapi(txt: Path, out: Path, voice: Voice) -> None:

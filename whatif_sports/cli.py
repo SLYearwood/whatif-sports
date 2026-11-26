@@ -30,10 +30,16 @@ def _cmd_render(args: argparse.Namespace) -> int:
 
     if _cmd_validate(args):
         return 1
-    voice = Voice.from_env()
-    if args.voice:
-        voice = Voice(args.voice, "" if args.voice == "sapi" else "rms")
-    render(load_script(args.script), voice)
+    render(load_script(args.script), Voice.from_env(args.voice))
+    return 0
+
+
+def _cmd_voices(args: argparse.Namespace) -> int:
+    from whatif_sports.voice import elevenlabs
+
+    for v in elevenlabs.list_voices():
+        print(f"{v['voice_id']}  {v.get('category', ''):<12} {v.get('name', '')}")
+    print("\nPut the one you want in .env as ELEVENLABS_VOICE_ID=<id>")
     return 0
 
 
@@ -48,13 +54,18 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("render", help="render a script to data/<id>/render/<id>.mp4")
     r.add_argument("script", help="item id or path to a script YAML")
-    r.add_argument("--voice", choices=["flite", "sapi"], help="override WHATIF_TTS")
+    r.add_argument("--voice", choices=["elevenlabs", "flite", "sapi"], help="override WHATIF_TTS")
     r.set_defaults(func=_cmd_render)
+
+    vs = sub.add_parser("voices", help="list the voices on your ElevenLabs account")
+    vs.set_defaults(func=_cmd_voices)
+
+    from whatif_sports.voice import ElevenLabsError
 
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (FileNotFoundError, ValueError) as e:
+    except (FileNotFoundError, ValueError, ElevenLabsError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
